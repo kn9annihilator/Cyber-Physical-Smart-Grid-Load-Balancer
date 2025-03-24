@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useToast } from "@/hooks/use-toast";
 import Header from '@/components/Header';
@@ -27,6 +26,7 @@ const Index = () => {
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previousTotal, setPreviousTotal] = useState<number | undefined>(undefined);
+  const [usingMockData, setUsingMockData] = useState(false);
   
   // Load initial data
   useEffect(() => {
@@ -44,6 +44,23 @@ const Index = () => {
       const result = await fetchSystemData();
       
       if (result.success && result.data) {
+        // Check if we're using mock data due to connection issues
+        if (result.usingMockData && !usingMockData) {
+          setUsingMockData(true);
+          toast({
+            title: "Using Mock Data Mode",
+            description: "Unable to connect to hardware. System has switched to mock data mode.",
+            variant: "warning",
+          });
+        } else if (!result.usingMockData && usingMockData) {
+          // We've reconnected to real hardware
+          setUsingMockData(false);
+          toast({
+            title: "Hardware Connected",
+            description: "Successfully reconnected to the hardware.",
+          });
+        }
+        
         // Save previous total for comparison
         if (appState?.systemStatus) {
           setPreviousTotal(appState.systemStatus.totalPower);
@@ -383,6 +400,7 @@ const Index = () => {
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenAlerts={() => setAlertsOpen(true)}
           alertCount={appState.alerts.length}
+          usingMockData={usingMockData}
         />
         
         <main>

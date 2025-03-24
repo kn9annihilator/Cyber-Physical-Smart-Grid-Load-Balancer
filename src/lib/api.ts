@@ -22,10 +22,31 @@ const shouldUseMockData = () => {
   return USE_MOCK_DATA;
 };
 
+// Store connection failure state
+let connectionFailures = 0;
+const MAX_FAILURES_BEFORE_MOCK = 3;
+let lastConnectionAttempt = 0;
+const CONNECTION_RETRY_INTERVAL = 30000; // 30 seconds
+
 // Function to fetch data from ESP8266
 export const fetchSystemData = async () => {
+  // Check if we're in a retry cooldown period
+  const now = Date.now();
+  if (connectionFailures >= MAX_FAILURES_BEFORE_MOCK && 
+      now - lastConnectionAttempt < CONNECTION_RETRY_INTERVAL) {
+    // Return mock data during cooldown
+    const mockData = generateMockAppState();
+    return {
+      success: true,
+      data: mockData
+    };
+  }
+  
+  // Update last connection attempt time
+  lastConnectionAttempt = now;
+  
+  // Return mock data if configured to do so
   if (shouldUseMockData()) {
-    // Return mock data
     const mockData = generateMockAppState();
     return {
       success: true,
@@ -34,17 +55,44 @@ export const fetchSystemData = async () => {
   }
   
   try {
-    const response = await fetch(`${API_ENDPOINT}/api/system`);
+    const response = await fetch(`${API_ENDPOINT}/api/system`, {
+      // Add timeout to prevent long waiting periods
+      signal: AbortSignal.timeout(5000)
+    });
+    
     if (!response.ok) {
       throw new Error(`HTTP error! Status: ${response.status}`);
     }
+    
     const data = await response.json();
+    
+    // Reset connection failures on success
+    connectionFailures = 0;
+    
     return {
       success: true,
       data
     };
   } catch (error) {
     console.error('Error fetching system data:', error);
+    
+    // Increment connection failures
+    connectionFailures++;
+    
+    // If we've reached our threshold, switch to mock data
+    if (connectionFailures >= MAX_FAILURES_BEFORE_MOCK) {
+      console.log(`Connection failed ${connectionFailures} times. Switching to mock data mode.`);
+      
+      // Get mock data
+      const mockData = generateMockAppState();
+      
+      return {
+        success: true,
+        data: mockData,
+        usingMockData: true
+      };
+    }
+    
     return {
       success: false,
       error: `Failed to fetch data: ${error}`

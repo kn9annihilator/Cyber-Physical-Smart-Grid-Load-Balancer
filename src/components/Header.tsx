@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Bell, Settings, Info } from 'lucide-react';
+import { Bell, Settings, Info, AlertTriangle } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { 
   DropdownMenu,
@@ -9,19 +9,22 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { SystemStatus } from '@/lib/types';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface HeaderProps {
   systemStatus: SystemStatus;
   onOpenSettings: () => void;
   onOpenAlerts: () => void;
   alertCount: number;
+  usingMockData?: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({ 
   systemStatus, 
   onOpenSettings, 
   onOpenAlerts,
-  alertCount
+  alertCount,
+  usingMockData = false
 }) => {
   return (
     <header className="w-full py-4 px-6 glass-card mb-6">
@@ -31,6 +34,20 @@ const Header: React.FC<HeaderProps> = ({
             <div className={`absolute inset-0 rounded-full ${systemStatus.isConnected ? 'bg-primary' : 'bg-destructive'} animate-pulse-slow`}></div>
           </div>
           <h1 className="text-gradient text-2xl font-medium">Smart Socket Sentinel</h1>
+          
+          {usingMockData && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center px-2 py-1 bg-yellow-500/20 rounded-md border border-yellow-500/30">
+                  <AlertTriangle size={14} className="text-yellow-500 mr-1" />
+                  <span className="text-xs font-medium text-yellow-500">Demo Mode</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Using mock data - unable to connect to hardware</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
         
         <div className="flex items-center space-x-4">
@@ -92,6 +109,12 @@ const Header: React.FC<HeaderProps> = ({
                     <div className="flex justify-between items-center">
                       <span>Isolation reason:</span>
                       <span className="text-destructive">{systemStatus.isolationReason}</span>
+                    </div>
+                  )}
+                  {usingMockData && (
+                    <div className="flex justify-between items-center">
+                      <span>Data source:</span>
+                      <span className="text-yellow-500">Mock data (demo mode)</span>
                     </div>
                   )}
                 </div>
