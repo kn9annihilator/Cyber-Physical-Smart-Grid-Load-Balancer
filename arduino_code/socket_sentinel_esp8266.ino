@@ -10,10 +10,20 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
+#include <PubSubClient.h>  // For MQTT (optional)
 
 // Wi-Fi credentials
 const char* ssid = "YourWiFiSSID";      // Replace with your WiFi SSID
 const char* password = "YourWiFiPass";   // Replace with your WiFi password
+
+// MQTT Settings (optional)
+const char* mqtt_server = "your-mqtt-broker.com";
+const int mqtt_port = 1883;
+const char* mqtt_user = "mqtt_user";
+const char* mqtt_password = "mqtt_password";
+const char* mqtt_topic_data = "socket_sentinel/data";
+const char* mqtt_topic_command = "socket_sentinel/command";
+bool useMqtt = false;  // Set to true if you want to use MQTT
 
 // Security settings
 String adminPassword = "admin123";       // Default admin password
@@ -34,8 +44,10 @@ int allowedIPsCount = 1;                 // Number of allowed IPs
 #define END_MARKER '>'
 #define DATA_SEPARATOR ','
 
-// Web server
+// Web server and MQTT clients
 ESP8266WebServer server(80);
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
 // System data
 struct SocketData {
@@ -51,6 +63,8 @@ SocketData sockets[3];
 bool systemIsolated = false;
 unsigned long lastArduinoData = 0;
 bool arduinoConnected = false;
+unsigned long lastDataPublish = 0;
+const unsigned long PUBLISH_INTERVAL = 5000; // 5 seconds
 
 // Setup function
 void setup() {
@@ -107,6 +121,12 @@ void setup() {
     
     // Start server
     server.begin();
+    
+    // Setup MQTT if enabled
+    if (useMqtt) {
+      mqttClient.setServer(mqtt_server, mqtt_port);
+      mqttClient.setCallback(mqttCallback);
+    }
   }
 }
 
@@ -124,6 +144,102 @@ void loop() {
   if (millis() - lastArduinoData > 5000) {
     arduinoConnected = false;
   }
+  
+  // Handle MQTT if enabled
+  if (useMqtt) {
+    // Maintain MQTT connection
+    if (!mqttClient.connected()) {
+      reconnectMqtt();
+    }
+    
+    // Process MQTT messages
+    mqttClient.loop();
+    
+    // Publish data at regular intervals
+    if (millis() - lastDataPublish > PUBLISH_INTERVAL) {
+      publishSystemData();
+      lastDataPublish = millis();
+    }
+  }
+}
+
+// MQTT reconnection function
+void reconnectMqtt() {
+  // Attempt to connect to MQTT broker
+  if (mqttClient.connect("ESP8266Client", mqtt_user, mqtt_password)) {
+    // Subscribe to command topic
+    mqttClient.subscribe(mqtt_topic_command);
+  }
+}
+
+// MQTT callback function
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  // Convert payload to string
+  String message;
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  
+  // Process message if it's a command
+  if (String(topic) == mqtt_topic_command) {
+    // Parse JSON command
+    DynamicJsonDocument doc(512);
+    DeserializationError error = deserializeJson(doc, message);
+    
+    if (!error) {
+      // Process relay control command
+      if (doc.containsKey("relay")) {
+        int relayId = doc["relay"]["id"];
+        bool state = doc["relay"]["state"];
+        
+        // Control relay
+        controlRelay(relayId, state);
+      }
+      
+      // Process isolation command
+      if (doc.containsKey("isolate")) {
+        bool isolate = doc["isolate"]["state"];
+        String password = doc["isolate"]["password"];
+        
+        // Only isolate if password is correct
+        if (password == adminPassword) {
+          controlIsolation(isolate);
+        }
+      }
+    }
+  }
+}
+
+// Function to publish system data via MQTT
+void publishSystemData() {
+  if (!mqttClient.connected()) {
+    return;
+  }
+  
+  // Create JSON document
+  DynamicJsonDocument doc(2048);
+  
+  // Add socket data
+  JsonArray socketsArray = doc.createNestedArray("sockets");
+  for (int i = 0; i < 3; i++) {
+    JsonObject socketObj = socketsArray.createNestedObject();
+    socketObj["id"] = sockets[i].id;
+    socketObj["status"] = sockets[i].status;
+    socketObj["voltage"] = sockets[i].voltage;
+    socketObj["current"] = sockets[i].current;
+    socketObj["power"] = sockets[i].power;
+    socketObj["isActive"] = sockets[i].isActive;
+  }
+  
+  // Add system status
+  doc["systemStatus"]["isConnected"] = arduinoConnected;
+  doc["systemStatus"]["isIsolated"] = systemIsolated;
+  doc["systemStatus"]["isolationReason"] = isolationReason;
+  
+  // Serialize and publish
+  String jsonString;
+  serializeJson(doc, jsonString);
+  mqttClient.publish(mqtt_topic_data, jsonString.c_str());
 }
 
 // Function to receive data from Arduino

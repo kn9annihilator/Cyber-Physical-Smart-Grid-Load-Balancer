@@ -109,6 +109,58 @@ void readSensors() {
   sockets[2].current = readCurrent(CURRENT3_PIN);
   sockets[2].power = sockets[2].voltage * sockets[2].current;
   sockets[2].isActive = sockets[2].power > 10.0;
+  
+  // Safety check: If any socket has extremely high power, isolate the system
+  for (int i = 0; i < 3; i++) {
+    if (sockets[i].power > 2000.0) { // 2000W threshold for safety
+      controlIsolation(true);
+      break;
+    }
+  }
+  
+  // Load balancing logic (if not already isolated)
+  if (!systemIsolated) {
+    balanceLoad();
+  }
+}
+
+// Function to balance load across sockets
+void balanceLoad() {
+  // Calculate total active sockets and total power
+  int activeSockets = 0;
+  float totalPower = 0;
+  
+  for (int i = 0; i < 3; i++) {
+    if (sockets[i].power > 50.0) {
+      activeSockets++;
+      totalPower += sockets[i].power;
+    }
+  }
+  
+  // If only one socket is heavily loaded (>80% of total power), try to distribute
+  if (activeSockets > 1) {
+    for (int i = 0; i < 3; i++) {
+      if (sockets[i].power > 0.8 * totalPower) {
+        // Find the least used socket
+        int leastUsedSocket = -1;
+        float minPower = 99999;
+        
+        for (int j = 0; j < 3; j++) {
+          if (j != i && sockets[j].relayState && sockets[j].power < minPower) {
+            minPower = sockets[j].power;
+            leastUsedSocket = j;
+          }
+        }
+        
+        // If found, turn it off to balance load
+        if (leastUsedSocket >= 0 && minPower < 20.0) {
+          controlRelay(leastUsedSocket + 1, false);
+        }
+        
+        break;
+      }
+    }
+  }
 }
 
 // Function to read voltage from ZMPT101B sensor
@@ -125,8 +177,8 @@ float readVoltage(int pin) {
   
   float avgVoltage = sum / samples;
   
-  // Apply calibration factor
-  return avgVoltage * VOLTAGE_CALIBRATION * 110.0; // Scale to AC voltage (around 220-240V)
+  // Apply calibration factor and scale to AC voltage
+  return avgVoltage * VOLTAGE_CALIBRATION * 110.0; // Scale to AC voltage
 }
 
 // Function to read current from ACS712 sensor

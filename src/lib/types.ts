@@ -32,6 +32,7 @@ export interface AlertMessage {
   type: 'warning' | 'error' | 'info' | 'success';
   message: string;
   timestamp: string;
+  acknowledged?: boolean;
 }
 
 export interface AppConfig {
@@ -41,6 +42,13 @@ export interface AppConfig {
   autoLoadBalance: boolean;
   predictionEnabled: boolean;
   mockDataEnabled: boolean;
+}
+
+// Load balancing settings
+export interface LoadBalancingConfig {
+  enabled: boolean;
+  threshold: number;
+  minimumLoad: number;
 }
 
 // Dashboard data state
