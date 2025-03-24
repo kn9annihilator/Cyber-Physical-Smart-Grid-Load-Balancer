@@ -28,15 +28,12 @@ const Index = () => {
   const [previousTotal, setPreviousTotal] = useState<number | undefined>(undefined);
   const [usingMockData, setUsingMockData] = useState(false);
   
-  // Load initial data
   useEffect(() => {
     loadSystemData();
-    // Set up polling interval
     const interval = setInterval(loadSystemData, 5000); // Poll every 5 seconds
     return () => clearInterval(interval);
   }, []);
   
-  // Function to load system data
   const loadSystemData = async () => {
     setIsLoading(true);
     
@@ -44,16 +41,14 @@ const Index = () => {
       const result = await fetchSystemData();
       
       if (result.success && result.data) {
-        // Check if we're using mock data due to connection issues
         if (result.usingMockData && !usingMockData) {
           setUsingMockData(true);
           toast({
             title: "Using Mock Data Mode",
             description: "Unable to connect to hardware. System has switched to mock data mode.",
-            variant: "warning",
+            variant: "destructive",
           });
         } else if (!result.usingMockData && usingMockData) {
-          // We've reconnected to real hardware
           setUsingMockData(false);
           toast({
             title: "Hardware Connected",
@@ -61,18 +56,15 @@ const Index = () => {
           });
         }
         
-        // Save previous total for comparison
         if (appState?.systemStatus) {
           setPreviousTotal(appState.systemStatus.totalPower);
         }
         
-        // Process predictions if enabled
         let updatedData = { ...result.data };
         
         if (result.data.config.predictionEnabled && result.data.powerHistory.length > 0) {
           const predictions = predictFuturePower(result.data.powerHistory);
           
-          // Adjust predictions based on actual data
           if (result.data.systemStatus.totalPower) {
             updatedData.predictions = adjustPredictions(
               predictions, 
@@ -83,7 +75,6 @@ const Index = () => {
           }
         }
         
-        // Check for anomalies and create alerts
         if (appState) {
           updatedData = checkForAnomalies(updatedData);
         }
@@ -104,12 +95,10 @@ const Index = () => {
     }
   };
   
-  // Function to check for anomalies and create alerts
   const checkForAnomalies = (data: AppState): AppState => {
     const updatedData = { ...data };
     const { systemStatus, config } = data;
     
-    // Check for high power usage
     if (systemStatus.totalPower > config.highPowerThreshold && !systemStatus.isIsolated) {
       if (!hasAlertOfType(data.alerts, 'high-power')) {
         addAlert(updatedData, {
@@ -121,7 +110,6 @@ const Index = () => {
       }
     }
     
-    // Check for abnormal system activity
     if (systemStatus.abnormalDetected && !hasAlertOfType(data.alerts, 'abnormal-activity')) {
       addAlert(updatedData, {
         id: `abnormal-activity-${uuidv4()}`,
@@ -131,7 +119,6 @@ const Index = () => {
       });
     }
     
-    // Handle isolation alerts
     if (systemStatus.isIsolated && !hasAlertOfType(data.alerts, 'isolation')) {
       addAlert(updatedData, {
         id: `isolation-${uuidv4()}`,
@@ -141,7 +128,6 @@ const Index = () => {
       });
     }
     
-    // Check for load imbalance if auto-balancing is enabled
     if (config.autoLoadBalance && !systemStatus.isIsolated) {
       checkLoadBalance(updatedData);
     }
@@ -149,36 +135,28 @@ const Index = () => {
     return updatedData;
   };
   
-  // Helper to check if we already have an alert of a specific type
   const hasAlertOfType = (alerts: AlertMessage[], type: string): boolean => {
     return alerts.some(alert => alert.id.startsWith(type));
   };
   
-  // Helper to add an alert to the state
   const addAlert = (state: AppState, alert: AlertMessage) => {
     state.alerts = [alert, ...state.alerts];
   };
   
-  // Function to check and balance load
   const checkLoadBalance = async (state: AppState) => {
     const { sockets } = state;
     
-    // Find inactive sockets (on but not consuming much power)
     const inactiveSockets = sockets.filter(socket => 
       socket.status && socket.power < 10 && !socket.isActive
     );
     
-    // Find high power sockets
     const highPowerSockets = sockets.filter(socket => 
       socket.status && socket.power > 100
     );
     
-    // If we have inactive sockets and high power sockets, suggest balancing
     if (inactiveSockets.length > 0 && highPowerSockets.length > 0) {
-      // Automatically turn off inactive sockets
       inactiveSockets.forEach(async (socket) => {
         if (!hasAlertOfType(state.alerts, `auto-balance-${socket.id}`)) {
-          // Add alert about auto-balancing
           addAlert(state, {
             id: `auto-balance-${socket.id}-${uuidv4()}`,
             type: 'info',
@@ -186,14 +164,12 @@ const Index = () => {
             timestamp: new Date().toISOString()
           });
           
-          // Actually turn off the socket
           await handleToggleSocket(socket.id, false);
         }
       });
     }
   };
   
-  // Handler for toggling socket state
   const handleToggleSocket = async (socketId: number, status: boolean) => {
     if (!appState) return;
     
@@ -201,7 +177,6 @@ const Index = () => {
       const result = await controlRelay(socketId, status);
       
       if (result.success) {
-        // Update local state
         setAppState(prev => {
           if (!prev) return prev;
           
@@ -234,13 +209,11 @@ const Index = () => {
     }
   };
   
-  // Handler for toggling isolation
   const handleToggleIsolation = async (status: boolean, password: string) => {
     try {
       const result = await controlIsolation(status, password);
       
       if (result.success) {
-        // Update local state
         setAppState(prev => {
           if (!prev) return prev;
           
@@ -278,13 +251,11 @@ const Index = () => {
     }
   };
   
-  // Handler for resetting communication
   const handleResetCommunication = async (password: string) => {
     try {
       const result = await resetCommunication(password);
       
       if (result.success) {
-        // Update local state
         setAppState(prev => {
           if (!prev) return prev;
           
@@ -319,13 +290,11 @@ const Index = () => {
     }
   };
   
-  // Handler for updating config
   const handleUpdateConfig = async (newConfig: AppConfig) => {
     try {
       const result = await updateConfig(newConfig);
       
       if (result.success) {
-        // Update local state
         setAppState(prev => {
           if (!prev) return prev;
           
@@ -356,7 +325,6 @@ const Index = () => {
     }
   };
   
-  // Handler for clearing an alert
   const handleClearAlert = (id: string) => {
     setAppState(prev => {
       if (!prev) return prev;
@@ -368,7 +336,6 @@ const Index = () => {
     });
   };
   
-  // Handler for clearing all alerts
   const handleClearAllAlerts = () => {
     setAppState(prev => {
       if (!prev) return prev;
@@ -380,7 +347,6 @@ const Index = () => {
     });
   };
   
-  // If app state is not loaded yet, show loading
   if (!appState) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background animate-pulse-slow">
