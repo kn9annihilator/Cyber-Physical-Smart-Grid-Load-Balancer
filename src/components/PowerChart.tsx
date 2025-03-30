@@ -45,16 +45,35 @@ const PowerChart: React.FC<PowerChartProps> = ({
   useEffect(() => {
     if (!powerHistory || powerHistory.length === 0) {
       console.log("No power history data available");
+      setChartData([]);
       return;
     }
     
     console.log("Processing power history data:", powerHistory.length, "items");
-    setChartData(prepareChartData());
+    
+    // Ensure we have valid data before proceeding
+    const validData = powerHistory.filter(item => {
+      return item && 
+             item.timestamp && 
+             typeof item.total === 'number' &&
+             typeof item.socket1 === 'number' &&
+             typeof item.socket2 === 'number' &&
+             typeof item.socket3 === 'number';
+    });
+    
+    if (validData.length === 0) {
+      console.log("No valid power history data after filtering");
+      setChartData([]);
+      return;
+    }
+    
+    const preparedData = prepareChartData(validData);
+    setChartData(preparedData);
   }, [powerHistory, timeRange, predictions]);
   
   // Filter data based on selected time range
-  const getFilteredData = () => {
-    if (!powerHistory || powerHistory.length === 0) {
+  const getFilteredData = (data: any[]) => {
+    if (!data || data.length === 0) {
       return [];
     }
     
@@ -77,14 +96,34 @@ const PowerChart: React.FC<PowerChartProps> = ({
     
     // Ensure the timestamp is in the correct format
     try {
-      return powerHistory.filter(item => {
+      return data.filter(item => {
         // Make sure timestamp is a valid date string
         if (!item.timestamp) return false;
         
-        const itemTime = new Date(item.timestamp).getTime();
+        // Try to parse the timestamp
+        let itemTime;
+        try {
+          itemTime = new Date(item.timestamp).getTime();
+        } catch (error) {
+          console.warn("Invalid timestamp format:", item.timestamp);
+          return false;
+        }
+        
         if (isNaN(itemTime)) {
           console.warn("Invalid timestamp:", item.timestamp);
           return false;
+        }
+        
+        // Handle the case where the timestamps might have old dates but should be displayed
+        // If all timestamps have the same date (like 2023-06-01), don't filter by time range
+        const allOldDates = data.every(d => {
+          const date = new Date(d.timestamp);
+          return date.getFullYear() < 2024;
+        });
+        
+        if (allOldDates) {
+          // If all dates are old (test/mock data), just return the most recent ones based on array position
+          return true;
         }
         
         return now - itemTime < rangeInMs;
@@ -96,8 +135,8 @@ const PowerChart: React.FC<PowerChartProps> = ({
   };
   
   // Prepare chart data by merging history and predictions
-  const prepareChartData = () => {
-    const filteredHistory = getFilteredData();
+  const prepareChartData = (validHistory: any[]) => {
+    const filteredHistory = getFilteredData(validHistory);
     
     if (filteredHistory.length === 0) {
       console.log("No filtered history data available");
@@ -114,6 +153,16 @@ const PowerChart: React.FC<PowerChartProps> = ({
       predicted: undefined
     }));
     
+    // Apply sorting to ensure data is in chronological order
+    historyData.sort((a, b) => {
+      const dateA = new Date(a.timestamp).getTime();
+      const dateB = new Date(b.timestamp).getTime();
+      return dateA - dateB;
+    });
+    
+    // Take only the last 60 points if we have too many
+    const trimmedData = historyData.length > 60 ? historyData.slice(-60) : historyData;
+    
     // If we have predictions, add them
     if (predictions && predictions.length > 0) {
       const predictionData = predictions.map(item => ({
@@ -126,10 +175,10 @@ const PowerChart: React.FC<PowerChartProps> = ({
         socket3: undefined
       }));
       
-      return [...historyData, ...predictionData];
+      return [...trimmedData, ...predictionData];
     }
     
-    return historyData;
+    return trimmedData;
   };
   
   // Format date for x-axis labels
@@ -183,6 +232,9 @@ const PowerChart: React.FC<PowerChartProps> = ({
     return null;
   };
   
+  // Check if we have chart data to display
+  const hasValidChartData = chartData && chartData.length > 0;
+  
   return (
     <Card className="glass-card col-span-3">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -204,7 +256,7 @@ const PowerChart: React.FC<PowerChartProps> = ({
         </Select>
       </CardHeader>
       <CardContent className="h-[300px] pt-4">
-        {chartData.length > 0 ? (
+        {hasValidChartData ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={chartData}

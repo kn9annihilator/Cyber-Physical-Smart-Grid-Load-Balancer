@@ -28,6 +28,72 @@ const MAX_FAILURES_BEFORE_MOCK = 3;
 let lastConnectionAttempt = 0;
 const CONNECTION_RETRY_INTERVAL = 30000; // 30 seconds
 
+// Helper function to sanitize power history data
+const sanitizePowerHistory = (powerHistory: any[]) => {
+  if (!powerHistory || !Array.isArray(powerHistory)) {
+    console.error("Invalid power history format:", powerHistory);
+    return [];
+  }
+  
+  return powerHistory.filter(item => {
+    return item && 
+           item.timestamp && 
+           typeof item.total === 'number' &&
+           typeof item.socket1 === 'number' &&
+           typeof item.socket2 === 'number' &&
+           typeof item.socket3 === 'number';
+  });
+};
+
+// Function to parse potentially malformed JSON from the server
+const parsePotentiallyMalformedJson = (text: string) => {
+  // First, try normal JSON parsing
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    console.error("Normal JSON parsing failed:", error);
+    
+    // Try to extract the power history data specifically
+    if (text.includes('socket1') && text.includes('socket2') && text.includes('socket3')) {
+      try {
+        // Look for array pattern
+        const arrayMatch = text.match(/\[\s*{.*}\s*\]/s);
+        if (arrayMatch) {
+          const powerHistoryArray = JSON.parse(arrayMatch[0]);
+          
+          // Create a mock state with the parsed power history
+          const mockData = generateMockAppState();
+          return {
+            ...mockData,
+            powerHistory: powerHistoryArray
+          };
+        }
+        
+        // If we can't find a complete array, try to reconstruct the data
+        const itemMatches = text.match(/{[^{}]*"socket1"[^{}]*"socket2"[^{}]*"socket3"[^{}]*}/g);
+        if (itemMatches && itemMatches.length > 0) {
+          try {
+            const powerHistoryArray = itemMatches.map(item => JSON.parse(item));
+            
+            // Create a mock state with the parsed power history
+            const mockData = generateMockAppState();
+            return {
+              ...mockData,
+              powerHistory: powerHistoryArray
+            };
+          } catch (e) {
+            console.error("Error parsing individual power history items:", e);
+          }
+        }
+      } catch (parseError) {
+        console.error("Advanced JSON parsing failed:", parseError);
+      }
+    }
+    
+    throw new Error("Could not parse response data");
+  }
+};
+
 // Function to fetch data from ESP8266
 export const fetchSystemData = async () => {
   // Check if we're in a retry cooldown period
@@ -70,60 +136,26 @@ export const fetchSystemData = async () => {
     const contentType = response.headers.get('content-type');
     
     if (contentType && contentType.includes('application/json')) {
-      data = await response.json();
+      // Standard JSON response
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        console.error("Error parsing JSON response:", jsonError);
+        // Try manual text parsing as fallback
+        const text = await response.text();
+        data = parsePotentiallyMalformedJson(text);
+      }
     } else {
-      // Try to parse the text as JSON manually
+      // Non-JSON response or missing content-type header
       const text = await response.text();
       console.log("Raw response:", text);
       
-      try {
-        // Attempt to fix malformed JSON by wrapping in proper structure
-        if (text.includes('socket1') && !text.startsWith('{')) {
-          // The response appears to be the power history array without proper formatting
-          // Let's try to reconstruct it as a proper AppState object
-          const mockState = generateMockAppState();
-          
-          try {
-            // Try to parse as JSON array first
-            const powerHistoryArray = JSON.parse(`[${text}]`);
-            return {
-              success: true,
-              data: {
-                ...mockState,
-                powerHistory: powerHistoryArray
-              }
-            };
-          } catch (parseError) {
-            console.error("Error parsing as JSON array:", parseError);
-            
-            // If that fails, try to reconstruct from the fragments
-            if (text.includes('socket1') && text.includes('socket2') && text.includes('socket3')) {
-              // Extract what appears to be the power history data
-              const match = text.match(/\[\{.*\}\]/);
-              if (match) {
-                try {
-                  const powerHistoryArray = JSON.parse(match[0]);
-                  return {
-                    success: true,
-                    data: {
-                      ...mockState,
-                      powerHistory: powerHistoryArray
-                    }
-                  };
-                } catch (innerError) {
-                  console.error("Error parsing matched JSON:", innerError);
-                }
-              }
-            }
-          }
-        }
-        
-        // If the above didn't work, try standard JSON parsing
-        data = JSON.parse(text);
-      } catch (parseError) {
-        console.error("Error parsing response as JSON:", parseError);
-        throw new Error(`Invalid JSON: ${text.substring(0, 200)}...`);
+      if (text.trim().length === 0) {
+        throw new Error("Empty response from server");
       }
+      
+      // Try to parse the text as JSON manually
+      data = parsePotentiallyMalformedJson(text);
     }
     
     // Reset connection failures on success
@@ -135,14 +167,16 @@ export const fetchSystemData = async () => {
       throw new Error("Invalid data format");
     }
     
-    // Ensure we have a complete data structure
+    // Ensure we have a complete data structure with fallbacks
+    const mockData = generateMockAppState();
+    
     if (!data.systemStatus) {
-      const mockData = generateMockAppState();
+      console.warn("Missing systemStatus, using mock data");
       data.systemStatus = mockData.systemStatus;
     }
     
     if (!data.sockets || !Array.isArray(data.sockets)) {
-      const mockData = generateMockAppState();
+      console.warn("Missing sockets array, using mock data");
       data.sockets = mockData.sockets;
     }
     
@@ -151,24 +185,30 @@ export const fetchSystemData = async () => {
     }
     
     if (!data.config) {
-      const mockData = generateMockAppState();
+      console.warn("Missing config, using mock data");
       data.config = mockData.config;
     }
     
-    // Make sure powerHistory is in the correct format
-    if (data.powerHistory && Array.isArray(data.powerHistory)) {
-      // Good, we have a power history array
-    } else if (typeof data.powerHistory === 'string') {
-      // Try to parse string as JSON
-      try {
-        data.powerHistory = JSON.parse(data.powerHistory);
-      } catch (error) {
-        console.error("Error parsing powerHistory string:", error);
-        data.powerHistory = [];
+    // Clean up power history data
+    if (data.powerHistory) {
+      if (Array.isArray(data.powerHistory)) {
+        data.powerHistory = sanitizePowerHistory(data.powerHistory);
+      } else if (typeof data.powerHistory === 'string') {
+        // Try to parse string as JSON
+        try {
+          const parsedHistory = JSON.parse(data.powerHistory);
+          data.powerHistory = sanitizePowerHistory(parsedHistory);
+        } catch (error) {
+          console.error("Error parsing powerHistory string:", error);
+          data.powerHistory = mockData.powerHistory;
+        }
+      } else {
+        console.warn("Invalid powerHistory format, using mock data");
+        data.powerHistory = mockData.powerHistory;
       }
     } else {
-      // No valid power history
-      data.powerHistory = [];
+      console.warn("Missing powerHistory, using mock data");
+      data.powerHistory = mockData.powerHistory;
     }
     
     return {

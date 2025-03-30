@@ -27,14 +27,24 @@ const Index = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previousTotal, setPreviousTotal] = useState<number | undefined>(undefined);
   const [usingMockData, setUsingMockData] = useState(false);
+  const [dataLoadAttempts, setDataLoadAttempts] = useState(0);
   
   useEffect(() => {
     loadSystemData();
-    const interval = setInterval(loadSystemData, 5000); // Poll every 5 seconds
+    
+    const interval = setInterval(loadSystemData, 5000);
+    
     return () => clearInterval(interval);
   }, []);
   
-  const loadSystemData = async () => {
+  useEffect(() => {
+    if (dataLoadAttempts > 3 && (!appState?.powerHistory || appState.powerHistory.length === 0)) {
+      console.log("Multiple load attempts failed, trying with forced refresh");
+      loadSystemData(true);
+    }
+  }, [dataLoadAttempts, appState]);
+  
+  const loadSystemData = async (forceRefresh = false) => {
     setIsLoading(true);
     
     try {
@@ -67,16 +77,27 @@ const Index = () => {
         if (updatedData.powerHistory && Array.isArray(updatedData.powerHistory)) {
           console.log("Power history items:", updatedData.powerHistory.length);
           
-          updatedData.powerHistory = updatedData.powerHistory.filter(item => {
-            return item && item.timestamp && 
+          const validPowerHistory = updatedData.powerHistory.filter(item => {
+            return item && 
+                   item.timestamp && 
                    typeof item.total === 'number' &&
                    typeof item.socket1 === 'number' &&
                    typeof item.socket2 === 'number' &&
                    typeof item.socket3 === 'number';
           });
+          
+          console.log("Valid power history items after filtering:", validPowerHistory.length);
+          updatedData.powerHistory = validPowerHistory;
+          
+          if (validPowerHistory.length > 0) {
+            setDataLoadAttempts(0);
+          } else {
+            setDataLoadAttempts(prev => prev + 1);
+          }
         } else {
           console.error("Power history data is invalid:", updatedData.powerHistory);
           updatedData.powerHistory = [];
+          setDataLoadAttempts(prev => prev + 1);
         }
         
         if (result.data.config.predictionEnabled && updatedData.powerHistory.length > 0) {
@@ -99,6 +120,8 @@ const Index = () => {
         setAppState(updatedData);
       } else {
         console.error("Failed to fetch data:", result.error);
+        setDataLoadAttempts(prev => prev + 1);
+        
         toast({
           title: "Connection Error",
           description: "Failed to fetch system data. Using cached data if available.",
@@ -107,6 +130,7 @@ const Index = () => {
       }
     } catch (error) {
       console.error("Error in data fetching:", error);
+      setDataLoadAttempts(prev => prev + 1);
     } finally {
       setIsLoading(false);
     }
