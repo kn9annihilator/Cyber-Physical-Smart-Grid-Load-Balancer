@@ -21,6 +21,11 @@ const SocketCard: React.FC<SocketCardProps> = ({
     onToggle(socket.id, !socket.status);
   };
   
+  // Display zeros for voltage, current, and power as actual values (not errors)
+  const voltage = socket.voltage !== undefined ? socket.voltage.toFixed(1) : "0.0";
+  const current = socket.current !== undefined ? socket.current.toFixed(2) : "0.00";
+  const power = socket.power !== undefined ? socket.power.toFixed(1) : "0.0";
+  
   return (
     <Card className={`glass-card transition-all duration-300 ${socket.status ? 'ring-1 ring-primary/30' : ''}`}>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -38,11 +43,11 @@ const SocketCard: React.FC<SocketCardProps> = ({
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">Voltage</p>
-            <p className="text-lg font-medium">{socket.voltage.toFixed(1)} V</p>
+            <p className="text-lg font-medium">{voltage} V</p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">Current</p>
-            <p className="text-lg font-medium">{socket.current.toFixed(2)} A</p>
+            <p className="text-lg font-medium">{current} A</p>
           </div>
         </div>
         
@@ -54,14 +59,14 @@ const SocketCard: React.FC<SocketCardProps> = ({
               <ZapOff size={18} className="text-muted-foreground mr-2" />
             )}
             <span className="text-sm font-medium">
-              {socket.power.toFixed(1)} W
+              {power} W
             </span>
           </div>
           
           <div className="h-1 w-16 bg-secondary rounded-full overflow-hidden">
             <div 
-              className={`h-full ${socket.power > 300 ? 'bg-destructive' : 'bg-primary'} transition-all duration-300`} 
-              style={{ width: `${Math.min(100, (socket.power / 500) * 100)}%` }}
+              className={`h-full ${parseFloat(power) > 300 ? 'bg-destructive' : 'bg-primary'} transition-all duration-300`} 
+              style={{ width: `${Math.min(100, (parseFloat(power) / 500) * 100)}%` }}
             ></div>
           </div>
         </div>

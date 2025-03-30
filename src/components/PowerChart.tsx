@@ -55,17 +55,22 @@ const PowerChart: React.FC<PowerChartProps> = ({
     const validData = powerHistory.filter(item => {
       return item && 
              item.timestamp && 
-             typeof item.total === 'number' &&
-             typeof item.socket1 === 'number' &&
-             typeof item.socket2 === 'number' &&
-             typeof item.socket3 === 'number';
+             (typeof item.total === 'number' || 
+              typeof item.socket1 === 'number' || 
+              typeof item.socket2 === 'number' || 
+              typeof item.socket3 === 'number');
     });
+    
+    console.log("Valid data after filtering:", validData.length, "items");
     
     if (validData.length === 0) {
       console.log("No valid power history data after filtering");
       setChartData([]);
       return;
     }
+    
+    // Log the first few items to debug
+    console.log("Sample data items:", validData.slice(0, 3));
     
     const preparedData = prepareChartData(validData);
     setChartData(preparedData);
@@ -75,6 +80,21 @@ const PowerChart: React.FC<PowerChartProps> = ({
   const getFilteredData = (data: any[]) => {
     if (!data || data.length === 0) {
       return [];
+    }
+    
+    // For old dates (2023), don't filter by time range, just use all data
+    const hasOldDates = data.some(d => {
+      try {
+        const date = new Date(d.timestamp);
+        return date.getFullYear() < 2024;
+      } catch (e) {
+        return false;
+      }
+    });
+    
+    if (hasOldDates) {
+      console.log("Using historical data (2023), not filtering by time range");
+      return data;
     }
     
     const now = new Date().getTime();
@@ -114,18 +134,6 @@ const PowerChart: React.FC<PowerChartProps> = ({
           return false;
         }
         
-        // Handle the case where the timestamps might have old dates but should be displayed
-        // If all timestamps have the same date (like 2023-06-01), don't filter by time range
-        const allOldDates = data.every(d => {
-          const date = new Date(d.timestamp);
-          return date.getFullYear() < 2024;
-        });
-        
-        if (allOldDates) {
-          // If all dates are old (test/mock data), just return the most recent ones based on array position
-          return true;
-        }
-        
         return now - itemTime < rangeInMs;
       });
     } catch (error) {
@@ -136,15 +144,23 @@ const PowerChart: React.FC<PowerChartProps> = ({
   
   // Prepare chart data by merging history and predictions
   const prepareChartData = (validHistory: any[]) => {
-    const filteredHistory = getFilteredData(validHistory);
-    
-    if (filteredHistory.length === 0) {
-      console.log("No filtered history data available");
+    if (validHistory.length === 0) {
+      console.log("No valid history data to prepare");
       return [];
     }
     
+    // For 2023 data, don't apply time range filtering
+    const isHistoricalData = validHistory.some(item => {
+      try {
+        const date = new Date(item.timestamp);
+        return date.getFullYear() < 2024;
+      } catch (e) {
+        return false;
+      }
+    });
+    
     // Process historical data
-    const historyData = filteredHistory.map(item => ({
+    const historyData = validHistory.map(item => ({
       timestamp: item.timestamp,
       total: item.total || 0,
       socket1: item.socket1 || 0,
@@ -155,13 +171,27 @@ const PowerChart: React.FC<PowerChartProps> = ({
     
     // Apply sorting to ensure data is in chronological order
     historyData.sort((a, b) => {
-      const dateA = new Date(a.timestamp).getTime();
-      const dateB = new Date(b.timestamp).getTime();
-      return dateA - dateB;
+      try {
+        const dateA = new Date(a.timestamp).getTime();
+        const dateB = new Date(b.timestamp).getTime();
+        if (isNaN(dateA) || isNaN(dateB)) {
+          return 0;
+        }
+        return dateA - dateB;
+      } catch (e) {
+        return 0;
+      }
     });
     
+    console.log("Sorted history data:", historyData.length, "items");
+    
+    // Apply filtering only if not historical data
+    const filteredData = isHistoricalData ? historyData : getFilteredData(historyData);
+    
     // Take only the last 60 points if we have too many
-    const trimmedData = historyData.length > 60 ? historyData.slice(-60) : historyData;
+    const trimmedData = filteredData.length > 60 ? filteredData.slice(-60) : filteredData;
+    
+    console.log("Trimmed data for chart:", trimmedData.length, "items");
     
     // If we have predictions, add them
     if (predictions && predictions.length > 0) {
@@ -306,7 +336,6 @@ const PowerChart: React.FC<PowerChartProps> = ({
                 name="Socket 1"
                 stroke="#3b82f6" 
                 fill="url(#colorSocket1)" 
-                stackId="1"
                 strokeWidth={1.5}
               />
               <Area 
@@ -315,7 +344,6 @@ const PowerChart: React.FC<PowerChartProps> = ({
                 name="Socket 2"
                 stroke="#f59e0b" 
                 fill="url(#colorSocket2)" 
-                stackId="1"
                 strokeWidth={1.5}
               />
               <Area 
@@ -324,7 +352,6 @@ const PowerChart: React.FC<PowerChartProps> = ({
                 name="Socket 3"
                 stroke="#ec4899" 
                 fill="url(#colorSocket3)" 
-                stackId="1"
                 strokeWidth={1.5}
               />
               {predictions && predictions.length > 0 && (

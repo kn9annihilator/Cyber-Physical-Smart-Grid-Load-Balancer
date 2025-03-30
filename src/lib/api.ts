@@ -3,8 +3,8 @@ import { SocketData, SystemStatus, AppConfig } from './types';
 import { generateMockAppState } from './mockData';
 
 // Configuration
-const API_ENDPOINT = 'http://192.168.1.100';  // Replace with your ESP8266 IP
-const USE_MOCK_DATA = true;  // Set to false when using real hardware
+const API_ENDPOINT = 'http://192.168.206.239';  // Updated to your ESP8266 IP
+const USE_MOCK_DATA = false;  // Changed to false to use real hardware data
 
 // Utility function to check if we should use mock data
 const shouldUseMockData = () => {
@@ -123,9 +123,10 @@ export const fetchSystemData = async () => {
   }
   
   try {
+    console.log("Fetching data from:", `${API_ENDPOINT}/api/system`);
     const response = await fetch(`${API_ENDPOINT}/api/system`, {
       // Add timeout to prevent long waiting periods
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(10000) // Increased timeout
     });
     
     if (!response.ok) {
@@ -139,16 +140,18 @@ export const fetchSystemData = async () => {
       // Standard JSON response
       try {
         data = await response.json();
+        console.log("Received JSON data:", data);
       } catch (jsonError) {
         console.error("Error parsing JSON response:", jsonError);
         // Try manual text parsing as fallback
         const text = await response.text();
+        console.log("Raw response text:", text);
         data = parsePotentiallyMalformedJson(text);
       }
     } else {
       // Non-JSON response or missing content-type header
       const text = await response.text();
-      console.log("Raw response:", text);
+      console.log("Raw response (non-JSON):", text);
       
       if (text.trim().length === 0) {
         throw new Error("Empty response from server");
@@ -166,6 +169,8 @@ export const fetchSystemData = async () => {
       console.error("Invalid data format received:", data);
       throw new Error("Invalid data format");
     }
+    
+    console.log("Processed data:", data);
     
     // Ensure we have a complete data structure with fallbacks
     const mockData = generateMockAppState();
@@ -193,6 +198,7 @@ export const fetchSystemData = async () => {
     if (data.powerHistory) {
       if (Array.isArray(data.powerHistory)) {
         data.powerHistory = sanitizePowerHistory(data.powerHistory);
+        console.log("Sanitized power history length:", data.powerHistory.length);
       } else if (typeof data.powerHistory === 'string') {
         // Try to parse string as JSON
         try {
@@ -209,6 +215,10 @@ export const fetchSystemData = async () => {
     } else {
       console.warn("Missing powerHistory, using mock data");
       data.powerHistory = mockData.powerHistory;
+    }
+    
+    if (!data.predictions) {
+      data.predictions = [];
     }
     
     return {
