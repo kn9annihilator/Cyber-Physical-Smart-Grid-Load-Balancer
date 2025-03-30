@@ -269,7 +269,8 @@ void receiveDataFromArduino() {
           endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
           systemIsolated = data.substring(startIdx, endIdx) == "1";
           startIdx = endIdx + 1;
-        } else if (type == "SOCKET") {
+        } 
+        else if (type == "SOCKET") {
           // Parse socket data
           // Format: SOCKET,id,state,voltage,current,power,isActive,
           
