@@ -41,6 +41,8 @@ const Index = () => {
       const result = await fetchSystemData();
       
       if (result.success && result.data) {
+        console.log("Received data:", result.data);
+        
         if (result.usingMockData && !usingMockData) {
           setUsingMockData(true);
           toast({
@@ -62,8 +64,23 @@ const Index = () => {
         
         let updatedData = { ...result.data };
         
-        if (result.data.config.predictionEnabled && result.data.powerHistory.length > 0) {
-          const predictions = predictFuturePower(result.data.powerHistory);
+        if (updatedData.powerHistory && Array.isArray(updatedData.powerHistory)) {
+          console.log("Power history items:", updatedData.powerHistory.length);
+          
+          updatedData.powerHistory = updatedData.powerHistory.filter(item => {
+            return item && item.timestamp && 
+                   typeof item.total === 'number' &&
+                   typeof item.socket1 === 'number' &&
+                   typeof item.socket2 === 'number' &&
+                   typeof item.socket3 === 'number';
+          });
+        } else {
+          console.error("Power history data is invalid:", updatedData.powerHistory);
+          updatedData.powerHistory = [];
+        }
+        
+        if (result.data.config.predictionEnabled && updatedData.powerHistory.length > 0) {
+          const predictions = predictFuturePower(updatedData.powerHistory);
           
           if (result.data.systemStatus.totalPower) {
             updatedData.predictions = adjustPredictions(
@@ -376,19 +393,25 @@ const Index = () => {
               previousTotal={previousTotal}
             />
             
-            {appState.sockets.map((socket) => (
-              <SocketCard 
-                key={socket.id}
-                socket={socket}
-                onToggle={handleToggleSocket}
-                isLoading={isLoading}
-              />
-            ))}
+            {appState.sockets && Array.isArray(appState.sockets) ? (
+              appState.sockets.map((socket) => (
+                <SocketCard 
+                  key={socket.id}
+                  socket={socket}
+                  onToggle={handleToggleSocket}
+                  isLoading={isLoading}
+                />
+              ))
+            ) : (
+              <div className="col-span-3 p-4 border rounded bg-card text-card-foreground">
+                <p>No socket data available</p>
+              </div>
+            )}
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <PowerChart 
-              powerHistory={appState.powerHistory}
+              powerHistory={appState.powerHistory || []}
               predictions={appState.config.predictionEnabled ? appState.predictions : undefined}
             />
             

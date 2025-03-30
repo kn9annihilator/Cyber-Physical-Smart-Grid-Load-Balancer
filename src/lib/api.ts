@@ -38,7 +38,8 @@ export const fetchSystemData = async () => {
     const mockData = generateMockAppState();
     return {
       success: true,
-      data: mockData
+      data: mockData,
+      usingMockData: true
     };
   }
   
@@ -50,7 +51,8 @@ export const fetchSystemData = async () => {
     const mockData = generateMockAppState();
     return {
       success: true,
-      data: mockData
+      data: mockData,
+      usingMockData: true
     };
   }
   
@@ -64,10 +66,110 @@ export const fetchSystemData = async () => {
       throw new Error(`HTTP error! Status: ${response.status}`);
     }
     
-    const data = await response.json();
+    let data;
+    const contentType = response.headers.get('content-type');
+    
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      // Try to parse the text as JSON manually
+      const text = await response.text();
+      console.log("Raw response:", text);
+      
+      try {
+        // Attempt to fix malformed JSON by wrapping in proper structure
+        if (text.includes('socket1') && !text.startsWith('{')) {
+          // The response appears to be the power history array without proper formatting
+          // Let's try to reconstruct it as a proper AppState object
+          const mockState = generateMockAppState();
+          
+          try {
+            // Try to parse as JSON array first
+            const powerHistoryArray = JSON.parse(`[${text}]`);
+            return {
+              success: true,
+              data: {
+                ...mockState,
+                powerHistory: powerHistoryArray
+              }
+            };
+          } catch (parseError) {
+            console.error("Error parsing as JSON array:", parseError);
+            
+            // If that fails, try to reconstruct from the fragments
+            if (text.includes('socket1') && text.includes('socket2') && text.includes('socket3')) {
+              // Extract what appears to be the power history data
+              const match = text.match(/\[\{.*\}\]/);
+              if (match) {
+                try {
+                  const powerHistoryArray = JSON.parse(match[0]);
+                  return {
+                    success: true,
+                    data: {
+                      ...mockState,
+                      powerHistory: powerHistoryArray
+                    }
+                  };
+                } catch (innerError) {
+                  console.error("Error parsing matched JSON:", innerError);
+                }
+              }
+            }
+          }
+        }
+        
+        // If the above didn't work, try standard JSON parsing
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error("Error parsing response as JSON:", parseError);
+        throw new Error(`Invalid JSON: ${text.substring(0, 200)}...`);
+      }
+    }
     
     // Reset connection failures on success
     connectionFailures = 0;
+    
+    // Validate received data
+    if (!data || typeof data !== 'object') {
+      console.error("Invalid data format received:", data);
+      throw new Error("Invalid data format");
+    }
+    
+    // Ensure we have a complete data structure
+    if (!data.systemStatus) {
+      const mockData = generateMockAppState();
+      data.systemStatus = mockData.systemStatus;
+    }
+    
+    if (!data.sockets || !Array.isArray(data.sockets)) {
+      const mockData = generateMockAppState();
+      data.sockets = mockData.sockets;
+    }
+    
+    if (!data.alerts || !Array.isArray(data.alerts)) {
+      data.alerts = [];
+    }
+    
+    if (!data.config) {
+      const mockData = generateMockAppState();
+      data.config = mockData.config;
+    }
+    
+    // Make sure powerHistory is in the correct format
+    if (data.powerHistory && Array.isArray(data.powerHistory)) {
+      // Good, we have a power history array
+    } else if (typeof data.powerHistory === 'string') {
+      // Try to parse string as JSON
+      try {
+        data.powerHistory = JSON.parse(data.powerHistory);
+      } catch (error) {
+        console.error("Error parsing powerHistory string:", error);
+        data.powerHistory = [];
+      }
+    } else {
+      // No valid power history
+      data.powerHistory = [];
+    }
     
     return {
       success: true,
