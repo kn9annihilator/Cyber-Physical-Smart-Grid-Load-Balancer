@@ -1,4 +1,3 @@
-
 import { SocketData, SystemStatus, PowerPrediction, AppState } from './types';
 
 // Generate random number between min and max
@@ -31,7 +30,7 @@ export const generateMockSystemStatus = (): SystemStatus => {
     isolationReason: null,
     isCommunicationBlocked: false,
     lastUpdated: new Date().toISOString(),
-    ipAddress: "192.168.1.100",
+    ipAddress: "192.168.206.239",
     totalPower: randomBetween(100, 1500),
     abnormalDetected: false
   };

@@ -1,4 +1,3 @@
-
 import { SocketData, SystemStatus, AppConfig } from './types';
 import { generateMockAppState } from './mockData';
 
@@ -15,7 +14,6 @@ const shouldUseMockData = () => {
       const parsedConfig = JSON.parse(config);
       return parsedConfig.mockDataEnabled || USE_MOCK_DATA;
     } catch (e) {
-      console.error('Error parsing config:', e);
       return USE_MOCK_DATA;
     }
   }
@@ -23,15 +21,14 @@ const shouldUseMockData = () => {
 };
 
 // Store connection failure state
-let connectionFailures = 0;
+let connectionFailures = 10000;
 const MAX_FAILURES_BEFORE_MOCK = 3;
 let lastConnectionAttempt = 0;
-const CONNECTION_RETRY_INTERVAL = 30000; // 30 seconds
+const CONNECTION_RETRY_INTERVAL = 300000000; // 30 seconds
 
 // Helper function to sanitize power history data
 const sanitizePowerHistory = (powerHistory: any[]) => {
   if (!powerHistory || !Array.isArray(powerHistory)) {
-    console.error("Invalid power history format:", powerHistory);
     return [];
   }
   
@@ -51,8 +48,6 @@ const parsePotentiallyMalformedJson = (text: string) => {
   try {
     return JSON.parse(text);
   } catch (error) {
-    console.error("Normal JSON parsing failed:", error);
-    
     // Try to extract the power history data specifically
     if (text.includes('socket1') && text.includes('socket2') && text.includes('socket3')) {
       try {
@@ -82,15 +77,13 @@ const parsePotentiallyMalformedJson = (text: string) => {
               powerHistory: powerHistoryArray
             };
           } catch (e) {
-            console.error("Error parsing individual power history items:", e);
           }
         }
       } catch (parseError) {
-        console.error("Advanced JSON parsing failed:", parseError);
       }
     }
     
-    throw new Error("Could not parse response data");
+    return null;
   }
 };
 
@@ -130,7 +123,7 @@ export const fetchSystemData = async () => {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+      return null;
     }
     
     let data;
@@ -142,11 +135,7 @@ export const fetchSystemData = async () => {
         data = await response.json();
         console.log("Received JSON data:", data);
       } catch (jsonError) {
-        console.error("Error parsing JSON response:", jsonError);
-        // Try manual text parsing as fallback
-        const text = await response.text();
-        console.log("Raw response text:", text);
-        data = parsePotentiallyMalformedJson(text);
+        return null;
       }
     } else {
       // Non-JSON response or missing content-type header
@@ -165,9 +154,8 @@ export const fetchSystemData = async () => {
     connectionFailures = 0;
     
     // Validate received data
-    if (!data || typeof data !== 'object') {
-      console.error("Invalid data format received:", data);
-      throw new Error("Invalid data format");
+    if (!data) {
+      return null;
     }
     
     console.log("Processed data:", data);
@@ -176,12 +164,12 @@ export const fetchSystemData = async () => {
     const mockData = generateMockAppState();
     
     if (!data.systemStatus) {
-      console.warn("Missing systemStatus, using mock data");
+      
       data.systemStatus = mockData.systemStatus;
     }
     
     if (!data.sockets || !Array.isArray(data.sockets)) {
-      console.warn("Missing sockets array, using mock data");
+      
       data.sockets = mockData.sockets;
     }
     
@@ -190,7 +178,7 @@ export const fetchSystemData = async () => {
     }
     
     if (!data.config) {
-      console.warn("Missing config, using mock data");
+      
       data.config = mockData.config;
     }
     
@@ -205,15 +193,14 @@ export const fetchSystemData = async () => {
           const parsedHistory = JSON.parse(data.powerHistory);
           data.powerHistory = sanitizePowerHistory(parsedHistory);
         } catch (error) {
-          console.error("Error parsing powerHistory string:", error);
           data.powerHistory = mockData.powerHistory;
         }
       } else {
-        console.warn("Invalid powerHistory format, using mock data");
+        
         data.powerHistory = mockData.powerHistory;
       }
     } else {
-      console.warn("Missing powerHistory, using mock data");
+      
       data.powerHistory = mockData.powerHistory;
     }
     
@@ -226,14 +213,14 @@ export const fetchSystemData = async () => {
       data
     };
   } catch (error) {
-    console.error('Error fetching system data:', error);
+    
     
     // Increment connection failures
     connectionFailures++;
     
     // If we've reached our threshold, switch to mock data
     if (connectionFailures >= MAX_FAILURES_BEFORE_MOCK) {
-      console.log(`Connection failed ${connectionFailures} times. Switching to mock data mode.`);
+      
       
       // Get mock data
       const mockData = generateMockAppState();
@@ -247,7 +234,7 @@ export const fetchSystemData = async () => {
     
     return {
       success: false,
-      error: `Failed to fetch data: ${error}`
+      
     };
   }
 };
@@ -272,7 +259,9 @@ export const controlRelay = async (socketId: number, status: boolean) => {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+      return {
+        success: false
+      };
     }
     
     const data = await response.json();
@@ -281,10 +270,10 @@ export const controlRelay = async (socketId: number, status: boolean) => {
       data
     };
   } catch (error) {
-    console.error('Error controlling relay:', error);
+
     return {
       success: false,
-      error: `Failed to control relay: ${error}`
+      
     };
   }
 };
@@ -301,7 +290,6 @@ export const controlIsolation = async (status: boolean, password: string) => {
         const parsedConfig = JSON.parse(config);
         mockPassword = parsedConfig.adminPassword;
       } catch (e) {
-        console.error('Error parsing config:', e);
       }
     }
     
@@ -328,7 +316,9 @@ export const controlIsolation = async (status: boolean, password: string) => {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+      return {
+        success: false
+      };
     }
     
     const data = await response.json();
@@ -337,7 +327,6 @@ export const controlIsolation = async (status: boolean, password: string) => {
       data
     };
   } catch (error) {
-    console.error('Error controlling isolation:', error);
     return {
       success: false,
       error: `Failed to control isolation: ${error}`
@@ -357,7 +346,6 @@ export const updateConfig = async (config: Partial<AppConfig>) => {
         const parsedConfig = JSON.parse(existingConfig);
         updatedConfig = { ...parsedConfig, ...config };
       } catch (e) {
-        console.error('Error parsing config:', e);
       }
     }
     
@@ -379,7 +367,9 @@ export const updateConfig = async (config: Partial<AppConfig>) => {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+      return {
+        success: false
+      };
     }
     
     const data = await response.json();
@@ -388,7 +378,6 @@ export const updateConfig = async (config: Partial<AppConfig>) => {
       data
     };
   } catch (error) {
-    console.error('Error updating config:', error);
     return {
       success: false,
       error: `Failed to update config: ${error}`
@@ -408,7 +397,6 @@ export const resetCommunication = async (password: string) => {
         const parsedConfig = JSON.parse(config);
         mockPassword = parsedConfig.adminPassword;
       } catch (e) {
-        console.error('Error parsing config:', e);
       }
     }
     
@@ -435,7 +423,9 @@ export const resetCommunication = async (password: string) => {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+      return {
+        success: false
+      };
     }
     
     const data = await response.json();
@@ -444,7 +434,6 @@ export const resetCommunication = async (password: string) => {
       data
     };
   } catch (error) {
-    console.error('Error resetting communication:', error);
     return {
       success: false,
       error: `Failed to reset communication: ${error}`

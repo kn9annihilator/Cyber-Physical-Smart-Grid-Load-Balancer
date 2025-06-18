@@ -1,4 +1,3 @@
-
 /*
  * Smart Socket Sentinel - ESP8266 Code
  * This code runs on the ESP8266 to:
@@ -12,9 +11,20 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>  // For MQTT (optional)
 
+// Version and Device Information
+#define FIRMWARE_VERSION "1.0.0"
+#define DEVICE_ID "SSS-ESP8266-001"
+
 // Wi-Fi credentials
-const char* ssid = "YourWiFiSSID";      // Replace with your WiFi SSID
-const char* password = "YourWiFiPass";   // Replace with your WiFi password
+#define WIFI_SSID "sam"
+#define WIFI_PASSWORD "12345678"
+
+// Security settings
+#define ARDUINO_TIMEOUT 5000  // 5 seconds timeout for Arduino communication
+#define SECURITY_CHECK_INTERVAL 1000  // 1 second interval for security checks
+bool securityEnabled = false;
+unsigned long securityTimeout = 0;
+unsigned long lastSecurityCheck = 0;
 
 // MQTT Settings (optional)
 const char* mqtt_server = "your-mqtt-broker.com";
@@ -34,10 +44,10 @@ String allowedIPs[10] = {"0.0.0.0"};     // List of allowed IPs (0.0.0.0 means a
 int allowedIPsCount = 1;                 // Number of allowed IPs
 
 // Pin mappings for direct relay control
-#define RELAY1_DIRECT_PIN D3     // Socket 1 direct control
-#define RELAY2_DIRECT_PIN D4     // Socket 2 direct control
-#define RELAY3_DIRECT_PIN D5     // Socket 3 direct control
-#define ISOLATION_DIRECT_PIN D6  // Isolation direct control
+#define RELAY1_DIRECT_PIN D1     // Socket 1 direct control
+#define RELAY2_DIRECT_PIN D2     // Socket 2 direct control
+#define RELAY3_DIRECT_PIN D6     // Socket 3 direct control
+#define ISOLATION_DIRECT_PIN D7  // Isolation direct control
 
 // UART communication with Arduino
 #define START_MARKER '<'
@@ -66,101 +76,154 @@ bool arduinoConnected = false;
 unsigned long lastDataPublish = 0;
 const unsigned long PUBLISH_INTERVAL = 5000; // 5 seconds
 
+// Function declarations
+void handleRoot();
+void handleSystemData();
+void handleControl();
+void handleSecurity();
+void handleUpdate();
+void handleReboot();
+bool checkSecurityStatus();
+String getISOTimestamp();
+String getISOTimestamp(unsigned long milliseconds);
+
 // Setup function
 void setup() {
-  // Initialize serial communication with Arduino
-  Serial.begin(9600);
+  Serial.begin(115200);
+  Serial.println("\n=== ESP8266 Starting ===");
+  Serial.println("Firmware Version: " + String(FIRMWARE_VERSION));
+  Serial.println("Device ID: " + String(DEVICE_ID));
   
-  // Initialize direct control pins
+  // Initialize pins
   pinMode(RELAY1_DIRECT_PIN, OUTPUT);
   pinMode(RELAY2_DIRECT_PIN, OUTPUT);
   pinMode(RELAY3_DIRECT_PIN, OUTPUT);
   pinMode(ISOLATION_DIRECT_PIN, OUTPUT);
   
-  // Initialize direct control pins to HIGH (relays OFF)
+  // Set initial states
   digitalWrite(RELAY1_DIRECT_PIN, HIGH);
   digitalWrite(RELAY2_DIRECT_PIN, HIGH);
   digitalWrite(RELAY3_DIRECT_PIN, HIGH);
   digitalWrite(ISOLATION_DIRECT_PIN, HIGH);
   
-  // Initialize socket data
-  for (int i = 0; i < 3; i++) {
-    sockets[i].id = i + 1;
-    sockets[i].status = false;
-    sockets[i].voltage = 0.0;
-    sockets[i].current = 0.0;
-    sockets[i].power = 0.0;
-    sockets[i].isActive = false;
-  }
+  // Initialize WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
-  // Connect to Wi-Fi
-  WiFi.begin(ssid, password);
+  Serial.println("\nConnecting to WiFi...");
+  Serial.println("SSID: " + String(WIFI_SSID));
   
-  // Wait for connection
-  int connectionAttempts = 0;
-  while (WiFi.status() != WL_CONNECTED && connectionAttempts < 20) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
-    connectionAttempts++;
+    Serial.print(".");
+    attempts++;
   }
   
-  // If connected to WiFi, set up web server
   if (WiFi.status() == WL_CONNECTED) {
-    // Configure server endpoints
-    server.on("/api/system", HTTP_GET, handleGetSystemData);
-    server.on("/api/relay", HTTP_POST, handleRelayControl);
-    server.on("/api/isolation", HTTP_POST, handleIsolationControl);
-    server.on("/api/config", HTTP_POST, handleConfigUpdate);
-    server.on("/api/reset", HTTP_POST, handleCommunicationReset);
-    
-    // Handle OPTIONS for CORS
-    server.on("/api/system", HTTP_OPTIONS, handleCORS);
-    server.on("/api/relay", HTTP_OPTIONS, handleCORS);
-    server.on("/api/isolation", HTTP_OPTIONS, handleCORS);
-    server.on("/api/config", HTTP_OPTIONS, handleCORS);
-    server.on("/api/reset", HTTP_OPTIONS, handleCORS);
-    
-    // Start server
-    server.begin();
-    
-    // Setup MQTT if enabled
-    if (useMqtt) {
-      mqttClient.setServer(mqtt_server, mqtt_port);
-      mqttClient.setCallback(mqttCallback);
-    }
+    Serial.println("\nWiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Signal Strength (RSSI): ");
+    Serial.println(WiFi.RSSI());
+  } else {
+    Serial.println("\nWiFi Connection Failed!");
+    Serial.println("Please check your WiFi credentials or network availability");
   }
+  
+  // Setup server routes
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/api/system", HTTP_GET, handleSystemData);
+  server.on("/api/control", HTTP_POST, handleControl);
+  server.on("/api/security", HTTP_POST, handleSecurity);
+  server.on("/api/update", HTTP_POST, handleUpdate);
+  server.on("/api/reboot", HTTP_POST, handleReboot);
+  
+  server.begin();
+  Serial.println("HTTP Server Started");
+  
+  // Initialize security
+  securityEnabled = false;
+  securityTimeout = 0;
+  lastSecurityCheck = 0;
+  
+  // Initialize system state
+  systemIsolated = false;
+  lastArduinoData = 0;
+  arduinoConnected = false;
+  
+  Serial.println("Setup Complete!");
+  Serial.println("=== End of Setup ===\n");
 }
 
 // Main loop
 void loop() {
-  // Handle web server clients
   server.handleClient();
   
-  // Check for data from Arduino
-  if (!communicationBlocked) {
-    receiveDataFromArduino();
-  }
-  
-  // Check if Arduino connection is lost
-  if (millis() - lastArduinoData > 5000) {
-    arduinoConnected = false;
-  }
-  
-  // Handle MQTT if enabled
-  if (useMqtt) {
-    // Maintain MQTT connection
-    if (!mqttClient.connected()) {
-      reconnectMqtt();
+  // Check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\nWiFi Connection Lost!");
+    Serial.println("Attempting to reconnect...");
+    
+    WiFi.disconnect();
+    delay(1000);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
     }
     
-    // Process MQTT messages
-    mqttClient.loop();
-    
-    // Publish data at regular intervals
-    if (millis() - lastDataPublish > PUBLISH_INTERVAL) {
-      publishSystemData();
-      lastDataPublish = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi Reconnected!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("\nWiFi Reconnection Failed!");
     }
   }
+  
+  // Check Arduino connection
+  if (millis() - lastArduinoData > ARDUINO_TIMEOUT) {
+    if (arduinoConnected) {
+      Serial.println("\nArduino Connection Lost!");
+      arduinoConnected = false;
+    }
+  }
+  
+  // Process Arduino data
+  receiveDataFromArduino();
+  
+  // Handle security timeout
+  if (securityEnabled && millis() > securityTimeout) {
+    Serial.println("\nSecurity Timeout!");
+    securityEnabled = false;
+    systemIsolated = true;
+    // Turn off all relays
+    digitalWrite(RELAY1_DIRECT_PIN, HIGH);
+    digitalWrite(RELAY2_DIRECT_PIN, HIGH);
+    digitalWrite(RELAY3_DIRECT_PIN, HIGH);
+    digitalWrite(ISOLATION_DIRECT_PIN, HIGH);
+  }
+  
+  // Check for security status
+  if (securityEnabled && millis() - lastSecurityCheck >= SECURITY_CHECK_INTERVAL) {
+    lastSecurityCheck = millis();
+    if (!checkSecurityStatus()) {
+      Serial.println("\nSecurity Check Failed!");
+      securityEnabled = false;
+      systemIsolated = true;
+      // Turn off all relays
+      digitalWrite(RELAY1_DIRECT_PIN, HIGH);
+      digitalWrite(RELAY2_DIRECT_PIN, HIGH);
+      digitalWrite(RELAY3_DIRECT_PIN, HIGH);
+      digitalWrite(ISOLATION_DIRECT_PIN, HIGH);
+    }
+  }
+  
+  delay(10); // Small delay to prevent watchdog issues
 }
 
 // MQTT reconnection function
@@ -247,10 +310,20 @@ void receiveDataFromArduino() {
   if (Serial.available() > 0) {
     String data = Serial.readStringUntil('\n');
     
+    // Debug: Print raw data with timestamp
+    Serial.println("\n=== New Data Received ===");
+    Serial.println("Timestamp: " + getISOTimestamp());
+    Serial.println("Raw data: " + data);
+    Serial.println("Data length: " + String(data.length()));
+    
     // Parse data if it has the proper format
     if (data.startsWith(String(START_MARKER)) && data.endsWith(String(END_MARKER))) {
       // Remove markers
       data = data.substring(1, data.length() - 1);
+      
+      // Debug: Print cleaned data
+      Serial.println("Cleaned data: " + data);
+      Serial.println("Cleaned data length: " + String(data.length()));
       
       // Update last data timestamp
       lastArduinoData = millis();
@@ -264,53 +337,117 @@ void receiveDataFromArduino() {
         String type = data.substring(startIdx, endIdx);
         startIdx = endIdx + 1;
         
+        // Debug: Print current type being processed
+        Serial.println("\nProcessing type: " + type);
+        Serial.println("Start index: " + String(startIdx));
+        Serial.println("Remaining data: " + data.substring(startIdx));
+        
         if (type == "STATUS") {
           // Parse system status
           endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-          systemIsolated = data.substring(startIdx, endIdx) == "1";
-          startIdx = endIdx + 1;
-        } 
-        else if (type == "SOCKET") {
+          if (endIdx != -1) {
+            String statusStr = data.substring(startIdx, endIdx);
+            systemIsolated = statusStr == "1";
+            startIdx = endIdx + 1;
+            
+            // Debug: Print system status
+            Serial.println("System isolated: " + String(systemIsolated));
+            Serial.println("Status string: " + statusStr);
+          } else {
+            Serial.println("Error: Missing status value");
+          }
+        } else if (type == "SOCKET") {
           // Parse socket data
           // Format: SOCKET,id,state,voltage,current,power,isActive,
           
           // Parse socket ID
           endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-          int socketId = data.substring(startIdx, endIdx).toInt() - 1;
-          startIdx = endIdx + 1;
-          
-          if (socketId >= 0 && socketId < 3) {
-            // Parse relay state
-            endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-            sockets[socketId].status = data.substring(startIdx, endIdx) == "1";
+          if (endIdx != -1) {
+            String socketIdStr = data.substring(startIdx, endIdx);
+            int socketId = socketIdStr.toInt() - 1;
             startIdx = endIdx + 1;
             
-            // Parse voltage
-            endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-            sockets[socketId].voltage = data.substring(startIdx, endIdx).toFloat();
-            startIdx = endIdx + 1;
+            // Debug: Print socket ID and remaining data
+            Serial.println("Processing socket: " + String(socketId + 1));
+            Serial.println("Socket ID string: " + socketIdStr);
+            Serial.println("Remaining data: " + data.substring(startIdx));
             
-            // Parse current
-            endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-            sockets[socketId].current = data.substring(startIdx, endIdx).toFloat();
-            startIdx = endIdx + 1;
-            
-            // Parse power
-            endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-            sockets[socketId].power = data.substring(startIdx, endIdx).toFloat();
-            startIdx = endIdx + 1;
-            
-            // Parse isActive
-            endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
-            sockets[socketId].isActive = data.substring(startIdx, endIdx) == "1";
-            startIdx = endIdx + 1;
+            if (socketId >= 0 && socketId < 3) {
+              // Parse relay state
+              endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
+              if (endIdx != -1) {
+                String stateStr = data.substring(startIdx, endIdx);
+                sockets[socketId].status = stateStr == "1";
+                startIdx = endIdx + 1;
+                
+                // Parse voltage
+                endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
+                if (endIdx != -1) {
+                  String voltageStr = data.substring(startIdx, endIdx);
+                  sockets[socketId].voltage = voltageStr.toFloat();
+                  startIdx = endIdx + 1;
+                  
+                  // Parse current
+                  endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
+                  if (endIdx != -1) {
+                    String currentStr = data.substring(startIdx, endIdx);
+                    sockets[socketId].current = currentStr.toFloat();
+                    startIdx = endIdx + 1;
+                    
+                    // Parse power
+                    endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
+                    if (endIdx != -1) {
+                      String powerStr = data.substring(startIdx, endIdx);
+                      sockets[socketId].power = powerStr.toFloat();
+                      startIdx = endIdx + 1;
+                      
+                      // Parse isActive
+                      endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
+                      if (endIdx != -1) {
+                        String activeStr = data.substring(startIdx, endIdx);
+                        sockets[socketId].isActive = activeStr == "1";
+                        startIdx = endIdx + 1;
+                        
+                        // Debug: Print parsed values with raw strings
+                        Serial.println("\nSocket " + String(socketId + 1) + " parsed values:");
+                        Serial.println("  Status: " + stateStr + " -> " + String(sockets[socketId].status));
+                        Serial.println("  Voltage: " + voltageStr + " -> " + String(sockets[socketId].voltage));
+                        Serial.println("  Current: " + currentStr + " -> " + String(sockets[socketId].current));
+                        Serial.println("  Power: " + powerStr + " -> " + String(sockets[socketId].power));
+                        Serial.println("  isActive: " + activeStr + " -> " + String(sockets[socketId].isActive));
+                      } else {
+                        Serial.println("Error: Missing isActive value");
+                      }
+                    } else {
+                      Serial.println("Error: Missing power value");
+                    }
+                  } else {
+                    Serial.println("Error: Missing current value");
+                  }
+                } else {
+                  Serial.println("Error: Missing voltage value");
+                }
+              } else {
+                Serial.println("Error: Missing state value");
+              }
+            } else {
+              Serial.println("Error: Invalid socket ID: " + String(socketId + 1));
+            }
+          } else {
+            Serial.println("Error: Missing socket ID");
           }
         }
         
         // Find next type
         endIdx = data.indexOf(DATA_SEPARATOR, startIdx);
       }
+    } else {
+      // Debug: Print error for invalid format
+      Serial.println("Error: Invalid data format - Missing markers");
+      Serial.println("Expected format: <TYPE,data,...>");
+      Serial.println("Received data: " + data);
     }
+    Serial.println("=== End of Data Processing ===\n");
   }
 }
 
